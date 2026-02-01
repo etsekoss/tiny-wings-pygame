@@ -9,6 +9,7 @@ terrain.py — Génération et rendu du terrain
 
 import math
 import random
+import pygame
 from typing import List, Tuple
 
 
@@ -26,7 +27,7 @@ class Terrain:
         self.rng = random.Random()
 
         # Multi-biomes
-        self.waves_base: List[Tuple[float, float]] = [(60, 0.010), (30, 0.023), (15, 0.045)]
+        self.waves_base: List[Tuple[float, float]] = [(85, 0.010), (45, 0.023), (22, 0.045)]
         self.waves_max:  List[Tuple[float, float]] = [(95, 0.016), (55, 0.035), (28, 0.070)]
         self.waves: List[Tuple[float, float]] = list(self.waves_base)
 
@@ -183,8 +184,10 @@ class Terrain:
         poly.append([self.points[-1][0], self.height])
         poly.append([self.points[0][0], self.height])
 
-        import pygame
         pygame.draw.polygon(screen, color_ground, poly)
-
         if color_outline is not None:
-            pygame.draw.lines(screen, color_outline, False, self.points, 2)
+            pygame.draw.lines(screen, color_outline, False, self.points, 3)
+    
+    def set_waves(self, waves):
+        """Override direct des sinusoïdes (amp, freq)."""
+        self.waves = list(waves)
