@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .DS_Store
 highscore.txt
+# build artifacts
+build/
+.pygame/
+*.apk
+.DS_Store
+__pycache__/
+*.pyc
