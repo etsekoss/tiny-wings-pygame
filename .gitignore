@@ -12,3 +12,6 @@ __pycache__/
 *.pyc
 *.docx
 ~$*.docx
+
+# build artifacts
+build/
