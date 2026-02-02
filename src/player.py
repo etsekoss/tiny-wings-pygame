@@ -2,11 +2,17 @@
 player.py — Gestion du joueur (Tiny Wings)
 
 Objectif "feel" Tiny Wings :
-- Maintien ESPACE = boost (mais contrôlé, pas "fusil")
+- Maintien action = boost (mais contrôlé, pas "fusil")
 - Montée (pente négative) = décélération naturelle (gravité qui tire)
 - Descente (pente positive) = légère accélération
-- Tap ESPACE = saut (jusqu'à 3)
+- Tap action = saut (jusqu'à 3)
 - Squash & stretch à l'impact + bille lisible (contour + highlight)
+
+Compat mobile/web :
+- main.py peut piloter l'input via :
+    player.boosting = ACTION_DOWN
+    player.action_pressed = ACTION_PRESSED
+- fallback clavier (ESPACE) si main ne pilote pas.
 """
 
 import pygame
@@ -28,9 +34,12 @@ class Player:
 
         self.state = "VOL"
 
-        # Input
+        # Input (fallback clavier)
         self.space_prev = False
         self.boosting = False
+
+        # Input injecté par main (mobile/web)
+        self.action_pressed = False  # edge (tap)
 
         # Triple saut (tap)
         self.jump_count = 0
@@ -43,7 +52,7 @@ class Player:
 
         # vitesse min/max
         self.vx_min = 90.0
-        self.vx_max = 520.0  # ↓ réduit pour éviter l'effet "fusil" (ajuste si besoin)
+        self.vx_max = 520.0  # ↓ réduit pour éviter l'effet "fusil"
 
         # Impact / squash
         self.impact_timer = 0.0
@@ -57,26 +66,60 @@ class Player:
         self.prev_slope = 0.0
 
         # Tuning "feel"
-        self.boost_gain = 0.55     # charge d'énergie (plus petit => boost moins violent)
-        self.base_charge = 0.06    # charge minimale
-        self.uphill_drag = 320.0   # freinage en montée (plus grand => montée plus dure)
-        self.downhill_push = 160.0 # petit push en descente
-        self.boost_push = 200.0    # conversion énergie -> vx (plus petit => moins violent)
-        self.friction = 0.08       # friction globale
+        self.boost_gain = 0.55      # charge d'énergie (plus petit => boost moins violent)
+        self.base_charge = 0.06     # charge minimale
+        self.uphill_drag = 320.0    # freinage en montée
+        self.downhill_push = 160.0  # petit push en descente
+        self.boost_push = 200.0     # conversion énergie -> vx
+        self.friction = 0.08        # friction globale
 
-    def update(self, dt: float, terrain) -> None:
+    # -------------------------
+    # INPUT LAYER (fallback)
+    # -------------------------
+    def _read_input(self) -> tuple[bool, bool]:
+        """
+        Retourne (boosting, pressed_edge).
+        - Si main.py fournit action_pressed/boosting => on les utilise.
+        - Sinon fallback clavier ESPACE.
+        """
+        # main a injecté un edge ?
+        pressed_edge = bool(getattr(self, "action_pressed", False))
+
+        # boosting peut être piloté par main
+        boosting = bool(getattr(self, "boosting", False))
+
+        # Si main ne pilote pas (cas desktop standalone), fallback clavier
+        # Heuristique : si action_pressed n'est jamais utilisé, on lit le clavier.
         keys = pygame.key.get_pressed()
         space = bool(keys[pygame.K_SPACE])
-        space_pressed = space and (not self.space_prev)
+
+        # Si main n'a pas mis boosting explicitement, on fallback
+        # (on considère "main pilote" quand action_pressed est présent ou quand boosting a été set)
+        # Ici, on prend la valeur clavier si aucune action n'est active et aucun edge fourni.
+        if (not pressed_edge) and (not boosting) and space:
+            boosting = True
+
+        # edge clavier si main n'en fournit pas
+        if not pressed_edge:
+            space_pressed = space and (not self.space_prev)
+            pressed_edge = space_pressed
+
         self.space_prev = space
-        self.boosting = space
+        return boosting, pressed_edge
+
+    def update(self, dt: float, terrain) -> None:
+        boosting, action_pressed = self._read_input()
+        self.boosting = boosting
+
+        # IMPORTANT: reset edge consommé (main le remettra à True au bon moment)
+        self.action_pressed = False
 
         ground_y = terrain.get_height_screen_x(self.x)
         slope = terrain.get_slope_screen_x(self.x)  # dy/dx (y vers le bas)
 
         if self._last_ground_y is None:
             self._last_ground_y = ground_y
-        ground_vy = (ground_y - self._last_ground_y) / dt
+        ground_vy = (ground_y - self._last_ground_y) / dt if dt > 0 else 0.0
 
         # timer impact
         if self.impact_timer > 0.0:
@@ -99,7 +142,7 @@ class Player:
             self.air_time = 0.0
 
             # Tap = saut
-            if space_pressed:
+            if action_pressed:
                 self.state = "VOL"
                 self.vy = -self.jump_strength
                 self.jump_count = 1
@@ -110,25 +153,16 @@ class Player:
                 charge = self.base_charge + self.boost_gain * downhill
                 self.energy += charge * dt
             else:
-                # sans action, l'énergie redescend
                 self.energy -= 0.40 * dt
 
             self.energy = max(0.0, min(2.0, self.energy))
 
             # --------- vx "Tiny Wings feel" ----------
-            # 1) Boost doux (pas fusil)
             self.vx += (self.boost_push * self.energy) * dt
-
-            # 2) Montée = freinage fort
             self.vx -= (self.uphill_drag * uphill) * dt
-
-            # 3) Descente = petit push naturel
             self.vx += (self.downhill_push * downhill) * dt
-
-            # 4) friction globale
             self.vx *= (1.0 - self.friction * dt)
 
-            # clamp
             self.vx = max(self.vx_min, min(self.vx_max, self.vx))
 
             # recoller au sol si toujours SOL
@@ -147,13 +181,12 @@ class Player:
         # -------------------
         else:
             # Tap en l'air => saut supplémentaire (jusqu'à 3)
-            if space_pressed and self.jump_count < self.jump_max:
+            if action_pressed and self.jump_count < self.jump_max:
                 k = self.jump_count
                 strength = self.jump_strength * (self.jump_decay ** k)
                 self.vy = min(self.vy, 0.0) - strength
                 self.jump_count += 1
 
-            # intégration
             self.vy += g * dt
             self.y += self.vy * dt
             self.air_time += dt
@@ -165,7 +198,6 @@ class Player:
                 self.vy = 0.0
                 self.state = "SOL"
 
-                # squash violent
                 if impact_vy > 900.0:
                     self.impact_timer = 0.12
                     self.impact_strength = min(impact_vy / 1800.0, 1.0)
@@ -200,13 +232,9 @@ class Player:
         rect = pygame.Rect(0, 0, w, h)
         rect.center = (int(self.x), int(self.y))
 
-        # ellipse principale
         pygame.draw.ellipse(screen, color, rect)
-
-        # contour noir (lisibilité)
         pygame.draw.ellipse(screen, (0, 0, 0), rect, 3)
 
-        # highlight blanc (effet “bille”)
         highlight = rect.copy()
         highlight.width = int(rect.width * 0.35)
         highlight.height = int(rect.height * 0.35)

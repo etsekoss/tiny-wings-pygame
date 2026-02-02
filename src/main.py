@@ -14,6 +14,8 @@ Boucle principale du jeu.
   - Level 1 : terrain lisse, pas de trous
   - Level 2 : terrain plus nerveux, quelques trous (max 4)
   - Level 3 : terrain + trous deviennent plus durs progressivement avec la distance
+- Mobile :
+  - tap/hold écran = même action que ESPACE (pas de clavier virtuel)
 """
 
 import pygame
@@ -45,8 +47,6 @@ try:
     pygame.mixer.init()
     SOUND_COIN = pygame.mixer.Sound("assets/sounds/coin.wav")
     SOUND_GAMEOVER = pygame.mixer.Sound("assets/sounds/gameover.wav")
-    # Convertis en wav "web safe" si besoin:
-    # ffmpeg -y -i assets/sounds/music.wav -ar 44100 -ac 2 -c:a pcm_s16le assets/sounds/music_web.wav
     MUSIC = pygame.mixer.Sound("assets/sounds/music_web.wav")
 except Exception:
     AUDIO_ENABLED = False
@@ -106,6 +106,26 @@ OUTLINE = (10, 60, 25)
 
 ui = UI()
 
+# -------------------------
+# INPUT ABSTRACTION (Desktop + Mobile)
+# -------------------------
+ACTION_DOWN = False       # état (hold)
+ACTION_PRESSED = False    # edge (tap)
+
+
+def action_down() -> None:
+    """Action principale ON (equiv. ESPACE down / touch down)."""
+    global ACTION_DOWN, ACTION_PRESSED
+    if not ACTION_DOWN:
+        ACTION_PRESSED = True
+    ACTION_DOWN = True
+
+
+def action_up() -> None:
+    """Action principale OFF (equiv. ESPACE up / touch up)."""
+    global ACTION_DOWN
+    ACTION_DOWN = False
+
 
 def reset_game():
     """Réinitialise une partie (objets + compteurs)."""
@@ -121,7 +141,7 @@ def reset_game():
 
     distance = 0.0
     score = 0.0
-    night_world_x = -1200.0          # départ raisonnable
+    night_world_x = -1200.0
     energy_zero_time = 0.0
 
     game_over = False
@@ -154,16 +174,20 @@ async def run():
     global distance, score, night_world_x, energy_zero_time
     global game_over, final_score, game_over_time, new_record, death_reason
     global AUDIO_ENABLED, music_started, user_interacted, music_channel
+    global ACTION_DOWN, ACTION_PRESSED
 
     while running:
         dt = clock.tick(FPS) / 1000.0
+
+        # reset edge chaque frame
+        ACTION_PRESSED = False
 
         # -------- EVENTS --------
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
 
-            # WebAudio: il faut une interaction utilisateur
+            # WebAudio: 1ère interaction
             if event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
                 user_interacted = True
                 if not music_started:
@@ -175,7 +199,26 @@ async def run():
                 if user_interacted and (not music_started):
                     try_start_music()
 
-            # touches actives uniquement en Game Over
+            # ---- ACTION INPUT ----
+            # Desktop: SPACE
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                action_down()
+            if event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
+                action_up()
+
+            # Mobile/Web: touch souvent via souris
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                action_down()
+            if event.type == pygame.MOUSEBUTTONUP:
+                action_up()
+
+            # Touch events (si disponibles selon build pygame)
+            if hasattr(pygame, "FINGERDOWN") and event.type == pygame.FINGERDOWN:
+                action_down()
+            if hasattr(pygame, "FINGERUP") and event.type == pygame.FINGERUP:
+                action_up()
+
+            # GAME OVER inputs
             if game_over and event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
@@ -195,10 +238,13 @@ async def run():
                     music_channel = None
                     music_started = False
                     user_interacted = False
+
                     prev_phase = 0
                     phase = 0
+                    ACTION_DOWN = False
+                    ACTION_PRESSED = False
 
-        # retry auto si interaction déjà faite
+        # retry auto musique si interaction déjà faite
         if user_interacted and (not music_started):
             try_start_music()
 
@@ -209,7 +255,6 @@ async def run():
             mult = 2.0 if player.air_time >= 2.0 else 1.0
             score += (player.vx * dt) * mult
 
-            # -------- Leveling --------
             prev_phase = phase
             if distance < 12000:
                 phase = 0
@@ -218,40 +263,30 @@ async def run():
             else:
                 phase = 2
 
-            # Si changement de niveau : reset des trous pour éviter trou immédiat
+            # changement de niveau -> reset trous
             if phase != prev_phase:
                 terrain.gaps = []
                 terrain.next_gap_wx = distance + 900
 
-            # -------- Réglages par niveau --------
+            # ---- difficulté / paramètres ----
             if phase == 0:
-                # Level 1 : très lisse, quasi aucun pic collé
                 terrain.gaps_enabled = False
                 terrain.gaps = []
                 terrain.set_waves([(55, 0.008), (25, 0.016), (10, 0.030)])
-
-                # Nuit lente au début
                 night_k, night_b = 0.80, 40.0
 
             elif phase == 1:
-                # Level 2 : un peu plus nerveux + quelques trous (max 4)
                 terrain.gaps_enabled = True
                 terrain.set_waves([(70, 0.010), (35, 0.020), (15, 0.040)])
-
-                # Trous franchissables et rares
                 terrain.gap_every = 5000.0
                 terrain.gap_width = 90.0
                 terrain.gap_ramp = 260.0
-
-                # Max 4 trous sur tout le niveau 2
                 if len(terrain.gaps) >= 4:
                     terrain.gaps_enabled = False
-
                 night_k, night_b = 0.90, 60.0
 
             else:
-                # Level 3 : augmente progressivement (montagnes + falaises)
-                t3 = min(max((distance - 30000.0) / 60000.0, 0.0), 1.0)  # 0 -> 1
+                t3 = min(max((distance - 30000.0) / 60000.0, 0.0), 1.0)
 
                 waves_easy = [(75, 0.010), (38, 0.022), (18, 0.045)]
                 waves_hard = [(95, 0.016), (55, 0.035), (28, 0.070)]
@@ -262,23 +297,24 @@ async def run():
                 ])
 
                 terrain.gaps_enabled = True
-                # trous de + en + fréquents et + larges
                 terrain.gap_every = 1800.0 - 900.0 * t3
                 terrain.gap_width = 140.0 + 140.0 * t3
                 terrain.gap_ramp = 240.0 - 80.0 * t3
 
                 night_k, night_b = 1.00, 100.0
 
-            # -------- Nuit + scrolling --------
+            # ---- nuit + scrolling ----
             night_world_x += (player.vx * night_k + night_b) * dt
 
             bg_terrain.update_scroll(player.vx * dt * 0.5)
             terrain.update_scroll(player.vx * dt)
 
-            # Physique joueur
+            # ---- player input injection ----
+            player.boosting = ACTION_DOWN
+            player.action_pressed = ACTION_PRESSED
             player.update(dt, terrain)
 
-            # Collectibles
+            # collectibles
             collectibles.update(distance, player.x, terrain)
             got = collectibles.check_collect(distance, player.x, player.y, terrain)
             if got > 0:
@@ -286,17 +322,15 @@ async def run():
                 if AUDIO_ENABLED and SOUND_COIN:
                     SOUND_COIN.play()
 
-            # GAME OVER 1 : nuit
+            # ---- game over ----
             if night_world_x >= distance:
                 game_over = True
                 death_reason = "night"
 
-            # GAME OVER 2 : chute
             if (not game_over) and (player.y > HEIGHT + 200):
                 game_over = True
                 death_reason = "hole"
 
-            # GAME OVER 3 : énergie = 0 trop longtemps
             if player.energy <= 0.01:
                 energy_zero_time += dt
             else:
@@ -307,7 +341,6 @@ async def run():
                 death_reason = "energy"
 
             if game_over:
-                # stop musique + SFX gameover
                 if music_channel:
                     try:
                         music_channel.stop()
@@ -336,7 +369,6 @@ async def run():
             overlay.fill((10, 10, 30, 120))
             screen.blit(overlay, (0, 0))
 
-        # HUD
         ui.draw_hud(screen, score, player.vx, player.state, player.boosting)
 
         coins_txt = ui.font.render(f"Coins: {coins}", True, (10, 10, 10))
@@ -345,7 +377,10 @@ async def run():
         level_txt = ui.font.render(f"Level: {phase+1}", True, (10, 10, 10))
         screen.blit(level_txt, (12, 95))
 
-        # GAME OVER
+        hint = "Touch/Hold to play (Mobile)" if IS_WEB else "SPACE to play"
+        hint_txt = ui.font.render(hint, True, (10, 10, 10))
+        screen.blit(hint_txt, (12, 125))
+
         if game_over:
             game_over_time += dt
             ui.draw_game_over_screen(screen, final_score, game_over_time, is_new_record=new_record)
@@ -360,8 +395,6 @@ async def run():
             screen.blit(reason_surf, (WIDTH // 2 - reason_surf.get_width() // 2, HEIGHT // 2 + 150))
 
         pygame.display.flip()
-
-        # yield navigateur
         await asyncio.sleep(0)
 
 
