@@ -1,0 +1,6 @@
+#!/Users/del_son_as/Dropbox/Mac/Desktop/CCI/Python/tiny-wings-pygame/.pygame/bin/python
+import sys
+from pygbag.app import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())
