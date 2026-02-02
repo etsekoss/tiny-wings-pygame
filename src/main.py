@@ -377,10 +377,6 @@ async def run():
         level_txt = ui.font.render(f"Level: {phase+1}", True, (10, 10, 10))
         screen.blit(level_txt, (12, 95))
 
-        hint = "Touch/Hold to play (Mobile)" if IS_WEB else "SPACE to play"
-        hint_txt = ui.font.render(hint, True, (10, 10, 10))
-        screen.blit(hint_txt, (12, 125))
-
         if game_over:
             game_over_time += dt
             ui.draw_game_over_screen(screen, final_score, game_over_time, is_new_record=new_record)
